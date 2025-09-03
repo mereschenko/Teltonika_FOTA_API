@@ -10,7 +10,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 # ---------------------------
-# ЛОГУВАННЯ У ФАЙЛ (DEBUG)
+# LOG TO A FILE (DEBUG)
 # ---------------------------
 _LOGGER = logging.getLogger("teltonika_fota")
 if not _LOGGER.handlers:
@@ -20,6 +20,7 @@ if not _LOGGER.handlers:
     _fh.setFormatter(_fmt)
     _LOGGER.addHandler(_fh)
 
+
 def _mask_token(tok: Optional[str]) -> str:
     if not tok:
         return "<empty>"
@@ -27,6 +28,7 @@ def _mask_token(tok: Optional[str]) -> str:
     if len(t) <= 6:
         return "***"
     return t[:3] + "..." + t[-3:]
+
 
 def _truncate(val: Any, limit: int = 1000) -> str:
     try:
@@ -54,6 +56,7 @@ def _parse_retry_after(header: Optional[str]) -> Optional[float]:
         except Exception:
             return None
 
+
 def _build_params(
     *,
     page: Optional[int] = None,
@@ -67,7 +70,6 @@ def _build_params(
     Sequences (other than strings/bytes) are expanded into repeated
     parameters as required by the FOTA Web API.
     """
-
     params: List[Tuple[str, Any]] = []
     if page is not None:
         params.append(("page", page))
@@ -104,7 +106,6 @@ def _unwrap_data(data: Any, aggressive: bool = False) -> Any:
     Returns:
         The innermost value for known patterns, otherwise the original input.
     """
-
     if not isinstance(data, dict):
         return data
 
@@ -116,11 +117,12 @@ def _unwrap_data(data: Any, aggressive: bool = False) -> Any:
 
     return data
 
+
 # ---------------------------
-# ПОМИЛКИ
+# ERRORS
 # ---------------------------
 class FotaWebApiError(Exception):
-    """Исключение для ошибок запросов к FOTA Web API."""
+    """Exception for FOTA Web API request errors."""
     def __init__(self, status: int, message: str, details: Optional[Any] = None):
         super().__init__(f"HTTP {status} Error: {message}")
         self.status = status
@@ -128,8 +130,7 @@ class FotaWebApiError(Exception):
 
 
 class FotaRateLimitError(FotaWebApiError):
-    """Ошибка превышения лимита запросов после повторных попыток."""
-
+    """Error exceeding request limit after retries."""
     def __init__(
         self,
         status: int,
@@ -143,11 +144,12 @@ class FotaRateLimitError(FotaWebApiError):
         self.retry_after = retry_after
         self.attempts = attempts
 
+
 # ---------------------------
-# КЛІЄНТ
+# CLIENT
 # ---------------------------
 class FotaClient:
-    """Клиент для Teltonika FOTA Web API, асинхронный."""
+    """Client for Teltonika FOTA Web API, asynchronous."""
     def __init__(
         self,
         token: str,
@@ -161,7 +163,6 @@ class FotaClient:
         self.token = token
         self._max_attempts = max(1, int(max_attempts))
         self._backoff_factor = float(backoff_factor)
-
 
         if session is None:
             if user_agent is None:
@@ -219,7 +220,7 @@ class FotaClient:
                         setattr(self.session, "headers", headers_obj)
                     headers_obj["User-Agent"] = new_ua
 
-        # Розділи API
+        # API sections
         self.devices = DeviceAPI(self)
         self.tasks = TaskAPI(self)
         self.batches = BatchAPI(self)
@@ -233,13 +234,13 @@ class FotaClient:
         self.can_adapters = CanAdapterAPI(self)
 
     async def _request(self, method: str, path: str, *, unwrap: bool = True, **kwargs) -> Any:
-        """Низкоуровневый вызов HTTP."""
+        """Low-level HTTP call."""
         url = self.base_url + path
         params = kwargs.get("params")
         body_json = kwargs.get("json")
         body_data = kwargs.get("data")
 
-        # Лог запиту
+        # Request log
         _LOGGER.debug(
             "REQUEST %s %s | headers.Authorization=%s | params=%s | json=%s | data=%s",
             method, url, _mask_token(self.token),
@@ -248,7 +249,7 @@ class FotaClient:
 
         for attempt in range(1, self._max_attempts + 1):
             async with self.session.request(method, url, **kwargs) as resp:
-                # Бінарний?
+                # Binary response?
                 is_binary = (kwargs.get("params", {}) or {}).get("download") or kwargs.get("stream")
                 txt = None
                 data_json = None
@@ -280,7 +281,7 @@ class FotaClient:
                     continue
 
                 if resp.status >= 400:
-                    # читаємо помилку
+                    # Read the error body (JSON or text)
                     try:
                         data_json = await resp.json()
                         txt = data_json
@@ -329,6 +330,7 @@ class FotaClient:
 
     async def __aexit__(self, exc_type, exc, tb):
         await self.close()
+
 
 # ---------------------------
 # DEVICES
@@ -435,16 +437,7 @@ class DeviceAPI:
         columns: Optional[List[str]] = None,
         description: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Export devices using an ID list or filter.
-
-        Args:
-            source: Selection source, e.g. ``"id_list"`` or ``"filter"``.
-            format: Desired export format (``"csv"``, ``"xlsx"``, etc.).
-            id_list: List of device IMEIs when ``source="id_list"``.
-            filter: List of filter objects when ``source="filter"``.
-            columns: Optional list of column names to include.
-            description: Optional export description.
-        """
+        """Export devices using an ID list or filter."""
         if source == "id_list" and not id_list:
             raise ValueError("id_list must be provided when source='id_list'")
         if source == "filter" and filter is None:
@@ -463,12 +456,7 @@ class DeviceAPI:
         return await self.client._request("POST", "/devices/export", json=payload)
 
     async def stats(self, field: str, **filters) -> Dict[str, Any]:
-        """Return device statistics grouped by ``field``.
-
-        ``filters`` values may be scalars or lists. Lists are serialized as
-        repeated query parameters per API contract.
-        """
-
+        """Return device statistics grouped by ``field``."""
         params: List[tuple] = [("field", field)]
         for k, v in filters.items():
             if v is None:
@@ -485,16 +473,7 @@ class DeviceAPI:
         field: str,
         company_id: Optional[Union[int, List[int]]] = None,
     ) -> Dict[str, Any]:
-        """Retrieve available values for a filter field.
-
-        Args:
-            field: Name of the field for which to return distinct values.
-            company_id: Optional company identifier(s) to scope the search.
-
-        Returns:
-            Parsed JSON response.
-        """
-
+        """Retrieve available values for a filter field."""
         params: List[tuple] = [("field", field)]
         if company_id is not None:
             if isinstance(company_id, list):
@@ -512,17 +491,7 @@ class DeviceAPI:
         filter: Optional[List[Dict[str, Any]]] = None,
         id_type: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Bulk update devices using either an ID list or a filter.
-
-        Args:
-            source: Selection source, ``"id_list"`` or ``"filter"``.
-            data: Fields to update for matching devices.
-            id_list: List of device identifiers when ``source="id_list"``.
-            filter: List of filter objects when ``source="filter"``.
-            id_type: Optional type of identifiers provided in ``id_list`` or
-                ``filter``. Accepts ``"id"``, ``"imei"`` or ``"sn"``.
-        """
-
+        """Bulk update devices using either an ID list or a filter."""
         if source not in {"id_list", "filter"}:
             raise ValueError("source must be 'id_list' or 'filter'")
         if source == "id_list" and not id_list:
@@ -549,7 +518,6 @@ class DeviceAPI:
         order: Optional[Union[str, List[str]]] = None,
     ) -> Dict[str, Any]:
         """Retrieve change history for a device."""
-
         imei_str = str(device_imei).strip()
         params: List[tuple] = [("page", page), ("per_page", per_page)]
         if sort:
@@ -566,11 +534,12 @@ class DeviceAPI:
         return await self.client._request(
             "GET", f"/devices/{imei_str}/changes", params=params
         )
-        
+
     # The FOTA Web API exposes internal endpoints for generating transfer tokens
     # and transferring device ownership. These endpoints are not part of the
     # public specification and related helper methods have been removed from the
     # client. Use with caution if interacting with them directly.
+
 
 # ---------------------------
 # TASKS
@@ -588,12 +557,7 @@ class TaskAPI:
         with_meta: bool = False,
         **filters
     ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
-        """List tasks with optional filters and pagination.
-
-        Set ``with_meta=True`` to receive the raw response including
-        pagination metadata. Sequence values in ``sort``, ``order`` or
-        ``filters`` are expanded into repeated query parameters.
-        """
+        """List tasks with optional filters and pagination."""
         params = _build_params(
             page=page, per_page=per_page, sort=sort, order=order, **filters
         )
@@ -637,23 +601,13 @@ class TaskAPI:
         The task type must be provided either via ``task_type`` or by supplying
         a ``type`` key within ``params``.
 
-        Args:
-            device_imei: Target device IMEI.
-            file_id: Optional file identifier.
-            task_type: Task type string. Overrides ``params['type']`` if both
-                are supplied.
-            schedule: Optional schedule object matching swagger schema with
-                ``type`` and ``attributes`` keys.
-            expire_existing_tasks: Whether to expire tasks of the same type.
-            **params: Extra fields to include in the payload. Used to pass
-                ``type`` when ``task_type`` is not given.
-
         Returns:
             Parsed JSON response from the API.
 
-        Raises:
-            ValueError: If ``device_imei`` or task ``type`` is missing, or
-                ``schedule`` is malformed.
+        Note:
+            For ``POST /tasks/{taskId}/cancel`` Teltonika typically returns a
+            confirmation message (e.g. "Task was canceled."). A background action
+            ID is **not guaranteed** for single cancel requests.
         """
         imei_str = str(device_imei).strip()
         if not imei_str:
@@ -690,10 +644,10 @@ class TaskAPI:
         expire_existing_tasks: Optional[bool] = None
     ) -> Dict[str, Any]:
         """
-        Приклад із Swagger для CAN OEM:
+        Example from Swagger for CAN OEM:
         {
           "attributes": "{\"vehicle_id\":10013}",
-          "device_imei": 350000000000001,
+          "device_imei": 3500000000000001,
           "type": "TxCanConfiguration"
         }
         """
@@ -732,17 +686,7 @@ class TaskAPI:
         return await self.client._request("POST", "/tasks/bulkCreate", json=payload)
 
     async def cancel(self, task_id: int) -> Dict[str, Any]:
-        """Cancel a single task.
-
-        Returns a dictionary containing the ``background_action_id`` that can
-        be used to track cancellation progress.
-
-        Example::
-
-            resp = await client.tasks.cancel(12345)
-            await client.background_actions.get(resp["background_action_id"])
-
-        """
+        """Cancel a single task (returns confirmation message; background action ID is not guaranteed)."""
         return await self.client._request("POST", f"/tasks/{task_id}/cancel", json={})
 
     async def bulk_cancel(
@@ -751,29 +695,7 @@ class TaskAPI:
         id_list: Optional[List[int]] = None,
         filter: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Cancel multiple tasks using one of two sources.
-
-        Returns a dictionary containing the ``background_action_id`` for
-        tracking asynchronous cancellation.
-
-        Args:
-            source: Source of tasks to cancel. Must be ``"id_list"`` or ``"filter"``.
-            id_list: List of task IDs when ``source="id_list"``.
-            filter: List of filter objects when ``source="filter"``.
-
-        Examples:
-
-            Cancel by task IDs::
-
-                resp = await client.tasks.bulk_cancel(source="id_list", id_list=[1, 2, 3])
-
-            Cancel by filter::
-
-                resp = await client.tasks.bulk_cancel(
-                    source="filter", filter=[{"field": "status", "value": "pending"}]
-                )
-
-        """
+        """Cancel multiple tasks using one of two sources."""
         if source not in {"id_list", "filter"}:
             raise ValueError("source must be 'id_list' or 'filter'")
         if source == "id_list" and not id_list:
@@ -786,6 +708,7 @@ class TaskAPI:
         if filter is not None:
             payload["filter"] = filter
         return await self.client._request("POST", "/tasks/bulkCancel", json=payload)
+
 
 # ---------------------------
 # BATCHES
@@ -807,12 +730,7 @@ class BatchAPI:
         with_meta: bool = False,
         **filters
     ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
-        """List batches with optional filters and pagination.
-
-        Set ``with_meta=True`` to receive the raw response including
-        pagination metadata. Sequence values in ``sort``, ``order`` or
-        ``filters`` are expanded into repeated query parameters.
-        """
+        """List batches with optional filters and pagination."""
         params = _build_params(
             page=page, per_page=per_page, sort=sort, order=order, **filters
         )
@@ -845,6 +763,7 @@ class BatchAPI:
             "POST", f"/batches/{batch_id}/retryFailedTasks", json={}
         )
 
+
 # ---------------------------
 # GROUPS
 # ---------------------------
@@ -861,11 +780,7 @@ class GroupAPI:
         with_meta: bool = False,
         **filters,
     ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
-        """List groups with optional filters and pagination.
-
-        Additional filters can be supplied as keyword arguments. Sequence
-        values are serialized as repeated query parameters.
-        """
+        """List groups with optional filters and pagination."""
         params = _build_params(
             page=page, per_page=per_page, sort=sort, order=order, **filters
         )
@@ -885,7 +800,6 @@ class GroupAPI:
         company_id: Optional[Union[int, List[int]]] = None,
     ) -> Dict[str, Any]:
         """Retrieve available values for a filter field."""
-
         params: List[tuple] = [("field", field)]
         if company_id is not None:
             if isinstance(company_id, list):
@@ -932,11 +846,8 @@ class GroupAPI:
         """Attempt to delete a single group via an undocumented endpoint.
 
         The public FOTA Web API does not expose a dedicated endpoint for
-        deleting individual groups.  Use :meth:`bulk_delete` instead for
-        officially supported deletion.  This helper exists only for
-        completeness and may cease to work without notice.
+        deleting individual groups. Use :meth:`bulk_delete` instead.
         """
-
         await self.client._request("DELETE", f"/groups/{group_id}")
 
     async def bulk_delete(
@@ -946,7 +857,6 @@ class GroupAPI:
         filter: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Bulk delete groups using either an ID list or a filter."""
-
         if source not in {"id_list", "filter"}:
             raise ValueError("source must be 'id_list' or 'filter'")
         if source == "id_list" and not id_list:
@@ -961,6 +871,7 @@ class GroupAPI:
             payload["filter"] = filter
 
         return await self.client._request("POST", "/groups/bulkDelete", json=payload)
+
 
 # ---------------------------
 # FILES
@@ -978,16 +889,7 @@ class FileAPI:
         with_meta: bool = False,
         **filters,
     ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
-        """List files available in the FOTA service.
-
-        Filters should be supplied as keyword arguments. Sequence values are
-        serialized as repeated query parameters. For example::
-
-            await api.files.list(type=["firmware", "configuration"], company_id=[1, 2])
-
-        Set ``with_meta=True`` to receive the full JSON response including
-        pagination metadata. By default only the list of files is returned.
-        """
+        """List files available in the FOTA service."""
         params = _build_params(
             page=page, per_page=per_page, sort=sort, order=order, **filters
         )
@@ -1007,7 +909,6 @@ class FileAPI:
         company_id: Optional[Union[int, List[int]]] = None,
     ) -> Dict[str, Any]:
         """Retrieve available values for a filter field."""
-
         params: List[tuple] = [("field", field)]
         if company_id is not None:
             if isinstance(company_id, list):
@@ -1026,18 +927,8 @@ class FileAPI:
     ) -> Dict[str, Any]:
         """Upload a file to the FOTA service.
 
-        Parameters
-        ----------
-        file_path: str
-            Path to the file on disk.
-        file_type: str
-            File category. Must be one of ``firmware``, ``configuration``,
-            ``certificate``, ``ble_fw`` or ``blue_nrg``. The value is case-insensitive
-            but will always be sent to the API in lower-case.
-        description: str
-            Optional human readable description.
-        company_ids: Optional[List[int]]
-            Optional list of company IDs that should see the file.
+        file_type must be one of: ``firmware``, ``configuration``,
+        ``certificate``, ``ble_fw``, ``blue_nrg``.
         """
         form = aiohttp.FormData()
         f = open(file_path, "rb")
@@ -1115,10 +1006,7 @@ class FileAPI:
         description: Optional[str] = None,
         company_id: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Partially update file metadata via ``PATCH``.
-
-        Use :meth:`replace` for full file replacement using ``PUT``.
-        """
+        """Partially update file metadata via ``PATCH``."""
         payload: Dict[str, Any] = {}
         if description is not None:
             payload["description"] = description
@@ -1150,7 +1038,6 @@ class FileAPI:
         filter: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Bulk delete files using either an ID list or a filter."""
-
         if source not in {"id_list", "filter"}:
             raise ValueError("source must be 'id_list' or 'filter'")
         if source == "id_list" and not id_list:
@@ -1166,6 +1053,7 @@ class FileAPI:
 
         return await self.client._request("POST", "/files/bulkDelete", json=payload)
 
+
 # ---------------------------
 # FIRMWARES
 # ---------------------------
@@ -1178,11 +1066,7 @@ class FirmwareAPI:
         with_meta: bool = False,
         **filters,
     ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
-        """List firmware files.
-
-        Additional filters can be supplied as keyword arguments and will be
-        forwarded to :meth:`FileAPI.list`.
-        """
+        """List firmware files (delegates to FileAPI.list)."""
         return await self.client.files.list(
             type="firmware", with_meta=with_meta, **filters
         )
@@ -1210,8 +1094,9 @@ class FirmwareAPI:
     async def get(self, file_id: int) -> Dict[str, Any]:
         return await self.client.files.get(file_id)
 
+
 # ---------------------------
-# CONFIGURATIONS (над файловим API)
+# CONFIGURATIONS (over the Files API)
 # ---------------------------
 class ConfigurationAPI:
     def __init__(self, client: FotaClient):
@@ -1222,16 +1107,17 @@ class ConfigurationAPI:
         with_meta: bool = False,
         **filters,
     ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
-        """List configuration files with optional metadata.
-
-        Additional filters can be supplied as keyword arguments and will be
-        forwarded to :meth:`FileAPI.list`.
-        """
+        """List configuration files with optional metadata."""
         return await self.client.files.list(
             type="configuration", with_meta=with_meta, **filters
         )
 
-    async def upload(self, file_path: str, description: str = "", company_id: Optional[int] = None) -> Dict[str, Any]:
+    async def upload(
+        self,
+        file_path: str,
+        description: str = "",
+        company_id: Optional[int] = None
+    ) -> Dict[str, Any]:
         company_ids = [company_id] if company_id is not None else None
         return await self.client.files.upload(
             file_path,
@@ -1249,6 +1135,7 @@ class ConfigurationAPI:
     async def get(self, file_id: int) -> Dict[str, Any]:
         return await self.client.files.get(file_id)
 
+
 # ---------------------------
 # COMPANIES
 # ---------------------------
@@ -1265,12 +1152,7 @@ class CompanyAPI:
         with_meta: bool = False,
         **filters,
     ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
-        """List companies with optional filters and pagination.
-
-        Additional filters can be supplied as keyword arguments. Sequence
-        values are serialized as repeated query parameters.
-        """
-
+        """List companies with optional filters and pagination."""
         params = _build_params(
             page=page, per_page=per_page, sort=sort, order=order, **filters
         )
@@ -1293,17 +1175,7 @@ class CompanyAPI:
         company_id: Optional[int] = None,
         company_ids: Optional[List[int]] = None,
     ) -> Dict[str, Any]:
-        """Return statistics for one or more companies.
-
-        Parameters
-        ----------
-        company_id: Optional[int]
-            Single company ID (kept for backwards compatibility).
-        company_ids: Optional[List[int]]
-            List of company IDs. Values are serialized as repeated
-            ``company_id`` query parameters per API contract.
-        """
-
+        """Return statistics for one or more companies."""
         params: List[tuple] = []
         if company_id is not None:
             params.append(("company_id", company_id))
@@ -1319,10 +1191,7 @@ class CompanyAPI:
         return await self.client._request("POST", "/companies", json=payload)
 
     async def update(self, company_id: int, **fields) -> Dict[str, Any]:
-        """Partially update company fields via ``PATCH``.
-
-        Use :meth:`replace` for full company replacement using ``PUT``.
-        """
+        """Partially update company fields via ``PATCH``."""
         if not fields:
             return await self.get(company_id)
         return await self.client._request(
@@ -1388,6 +1257,7 @@ class CompanyAPI:
             "GET", f"/companies/{company_id}/inheritance"
         )
 
+
 # ---------------------------
 # USERS
 # ---------------------------
@@ -1404,11 +1274,7 @@ class UserAPI:
         with_meta: bool = False,
         **filters,
     ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
-        """List users with optional filters and pagination.
-
-        Additional filters can be provided as keyword arguments. Sequence
-        values are serialized as repeated query parameters.
-        """
+        """List users with optional filters and pagination."""
         params = _build_params(
             page=page, per_page=per_page, sort=sort, order=order, **filters
         )
@@ -1440,10 +1306,7 @@ class UserAPI:
         return _unwrap_data(data, aggressive=True)
 
     async def update(self, user_id: Union[int, str], **fields) -> Dict[str, Any]:
-        """Partially update user fields via ``PATCH``.
-
-        Use :meth:`replace` for full user replacement using ``PUT``.
-        """
+        """Partially update user fields via ``PATCH``."""
         user_id_str = str(user_id)
         if not fields:
             return await self.get(user_id_str)
@@ -1480,6 +1343,7 @@ class UserAPI:
             payload["filter"] = filter
         return await self.client._request("POST", "/users/bulkDelete", json=payload)
 
+
 # ---------------------------
 # BACKGROUND ACTIONS
 # ---------------------------
@@ -1488,15 +1352,12 @@ class BackgroundActionAPI:
         self.client = client
 
     async def get(self, background_action_id: str) -> Dict[str, Any]:
-        """Fetch a background action by its identifier.
-
-        The backend may wrap the payload in ``{"data": {...}}``.
-        Any unrecognised structure is returned as-is.
-        """
+        """Fetch a background action by its identifier."""
         data = await self.client._request(
             "GET", f"/backgroundActions/{background_action_id}"
         )
         return _unwrap_data(data, aggressive=True)
+
 
 # ---------------------------
 # CAN ADAPTERS
@@ -1507,8 +1368,9 @@ class CanAdapterAPI:
 
     async def list_vehicles(self) -> List[Dict[str, Any]]:
         """
-        Повертає повний список підтримуваних авто.
-        Підтримує такі форми відповіді бекенду:
+        Returns the full list of supported vehicles.
+
+        Handles the following backend response shapes:
         - {"vehicles": [...]}
         - {"data": [...]}
         - {"data": {"vehicles": [...]}}
@@ -1529,18 +1391,22 @@ class CanAdapterAPI:
 
         return []
 
+
 # ---------------------------
-# ТЕСТ У МОДУЛІ
+# TEST IN THE MODULE
 # ---------------------------
 if __name__ == "__main__":
     async def main():
-        # !!! На час відладки вкажіть ваш токен тут:
-        TEST_TOKEN = "8806|rFq0ZV5dtioKwdx9bXSEGmxMsfEMX3UKSat41NhS"
+        # For debugging purposes, read token from env; skip if not set.
+        TEST_TOKEN = os.getenv("FOTA_TOKEN")
+        if not TEST_TOKEN:
+            print("[TEST] FOTA_TOKEN env var not set — skipping smoke test.")
+            return
 
         async with FotaClient(token=TEST_TOKEN) as client:
             print("[TEST] Base URL:", client.base_url)
 
-            # 1) Перевіримо доступ до каталогу CAN (smoke‑test токена)
+            # 1) Check access to CAN adapter vehicles (token smoke test)
             try:
                 vehicles = await client.can_adapters.list_vehicles()
                 print(f"[TEST] CAN vehicles fetched: {len(vehicles)} items")
@@ -1548,15 +1414,15 @@ if __name__ == "__main__":
                 print("[TEST][ERROR] canAdapters/vehicles:", e)
                 raise
 
-            # 2) Візьмемо перший доступний пристрій, щоб дізнатись company_id
+            # 2) Take the first available device to determine company_id
             devices = await client.devices.list(per_page=1)
             if not devices:
-                print("[TEST] No devices visible for this token → немає як отримати company_id")
+                print("[TEST] No devices visible for this token — cannot determine company_id")
                 return
             dev = devices[0]
             print("[TEST] Sample device:", dev)
 
-            # Витяг company_id з відповіді пристрою
+            # Extract company_id from device payload
             company_id = (
                 dev.get("company_id")
                 or (dev.get("company") or {}).get("id")
@@ -1567,7 +1433,7 @@ if __name__ == "__main__":
                 print("[TEST] Could not detect company_id from device payload")
                 return
 
-            # 3) Тестуємо /companies/stats саме з цим company_id
+            # 3) Test /companies/stats with this company_id
             stats = await client.companies.get_stats(company_id=int(company_id))
             print("[TEST] Company stats:", stats)
 
