@@ -18,16 +18,15 @@ pip install aiohttp
 
 Quick Start
 
+import os
 import asyncio
-from your_file import FotaClient  # replace with your module path
+from your_file import FotaClient
 
 async def main():
-    token = "YOUR_FOTA_TOKEN"
-    # IMPORTANT: User-Agent must be "Company App/Version"
-    async with FotaClient(
-        token=token,
-        user_agent="MicroTronic FotaClient/1.0"
-    ) as client:
+    token = os.getenv("FOTA_TOKEN")
+    if not token:
+        raise RuntimeError("Set FOTA_TOKEN env var")
+    async with FotaClient(token=token, user_agent="MicroTronic FotaClient/1.0") as client:
         devices = await client.devices.list()
         print("Devices:", len(devices))
 
