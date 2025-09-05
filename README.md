@@ -17,7 +17,7 @@ Requirements
 pip install aiohttp
 
 Quick Start
-
+''''''''''''''''''''''''''''''''''
 import os
 import asyncio
 from your_file import FotaClient
@@ -31,7 +31,7 @@ async def main():
         print("Devices:", len(devices))
 
 asyncio.run(main())
-
+''''''''''''''''''''''''''''''''
 Notes
 	•	Set a valid User-Agent string in the form: CompanyName AppName/Version.
 	•	The client writes debug logs to fota_api_debug.log and masks your token.
